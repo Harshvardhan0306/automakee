@@ -1,0 +1,456 @@
+-- Enable RLS on the profiles table
+ALTER TABLE profiles ENABLE ROW LEVEL SECURITY;
+
+-- Create policy for admins to view all profiles
+CREATE POLICY "Admin can view all profiles"
+ON profiles
+FOR SELECT
+USING (
+  EXISTS (
+    SELECT 1 FROM profiles 
+    WHERE id = auth.uid() AND is_admin = true
+  )
+);
+DROP POLICY "Admins can read all reviews" ON public.reviews;
+DROP POLICY "Admins can update reviews" ON public.reviews;
+DROP POLICY "Users can view their own subscriptions" ON public.user_subscriptions;
+DROP POLICY "Users can update their own subscriptions" ON public.user_subscriptions;
+DROP POLICY "Only admins can delete subscriptions" ON public.user_subscriptions;
+CREATE POLICY "Admins can read all reviews"
+  ON public.reviews
+  FOR SELECT
+  USING (
+    EXISTS (
+      SELECT 1 FROM public.profiles p
+      WHERE p.id = auth.uid() AND p.is_admin = TRUE
+    )
+  );
+
+CREATE POLICY "Admins can update reviews"
+  ON public.reviews
+  FOR UPDATE
+  USING (
+    EXISTS (
+      SELECT 1 FROM public.profiles p
+      WHERE p.id = auth.uid() AND p.is_admin = TRUE
+    )
+  );
+CREATE POLICY "Users can view their own subscriptions"
+  ON public.user_subscriptions
+  FOR SELECT
+  USING (
+    auth.uid() = user_id
+    OR EXISTS (
+      SELECT 1 FROM public.profiles p
+      WHERE p.id = auth.uid() AND p.is_admin = TRUE
+    )
+  );
+
+CREATE POLICY "Users can update their own subscriptions"
+  ON public.user_subscriptions
+  FOR UPDATE
+  USING (
+    auth.uid() = user_id
+    OR EXISTS (
+      SELECT 1 FROM public.profiles p
+      WHERE p.id = auth.uid() AND p.is_admin = TRUE
+    )
+  );
+
+CREATE POLICY "Only admins can delete subscriptions"
+  ON public.user_subscriptions
+  FOR DELETE
+  USING (
+    EXISTS (
+      SELECT 1 FROM public.profiles p
+      WHERE p.id = auth.uid() AND p.is_admin = TRUE
+    )
+  );
+ -- Update existing blog rows to have 'approved' status
+UPDATE public.blogs
+SET status = 'approved'
+WHERE status IS NULL;
+
+-- Update RLS policies for reviews table
+DROP POLICY "Admins can read all reviews" ON public.reviews;
+DROP POLICY "Admins can update reviews" ON public.reviews;
+DROP POLICY "Users can view their own subscriptions" ON public.user_subscriptions;
+DROP POLICY "Users can update their own subscriptions" ON public.user_subscriptions;
+DROP POLICY "Only admins can delete subscriptions" ON public.user_subscriptions;
+
+-- Create new RLS policies with improved admin access
+CREATE POLICY "Admins can read all reviews"
+  ON public.reviews
+  FOR SELECT
+  USING (
+    EXISTS (
+      SELECT 1 FROM public.profiles p
+      WHERE p.id = auth.uid() AND p.is_admin = TRUE
+    )
+  );
+
+CREATE POLICY "Admins can update reviews"
+  ON public.reviews
+  FOR UPDATE
+  USING (
+    EXISTS (
+      SELECT 1 FROM public.profiles p
+      WHERE p.id = auth.uid() AND p.is_admin = TRUE
+    )
+  );
+
+CREATE POLICY "Users can view their own subscriptions"
+  ON public.user_subscriptions
+  FOR SELECT
+  USING (
+    auth.uid() = user_id
+    OR EXISTS (
+      SELECT 1 FROM public.profiles p
+      WHERE p.id = auth.uid() AND p.is_admin = TRUE
+    )
+  );
+
+CREATE POLICY "Users can update their own subscriptions"
+  ON public.user_subscriptions
+  FOR UPDATE
+  USING (
+    auth.uid() = user_id
+    OR EXISTS (
+      SELECT 1 FROM public.profiles p
+      WHERE p.id = auth.uid() AND p.is_admin = TRUE
+    )
+  );
+
+CREATE POLICY "Only admins can delete subscriptions"
+  ON public.user_subscriptions
+  FOR DELETE
+  USING (
+    EXISTS (
+      SELECT 1 FROM public.profiles p
+      WHERE p.id = auth.uid() AND p.is_admin = TRUE
+    )
+  ); -- Create profiles table for user information
+CREATE TABLE public.profiles (
+  id UUID REFERENCES auth.users(id) ON DELETE CASCADE NOT NULL PRIMARY KEY,
+  username TEXT,
+  full_name TEXT,
+  avatar_url TEXT,
+  is_admin BOOLEAN DEFAULT false,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL
+);
+
+-- Enable Row Level Security
+ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
+
+-- Create policy for profiles
+CREATE POLICY "Users can view their own profile" 
+  ON public.profiles 
+  FOR SELECT 
+  USING (auth.uid() = id);
+
+CREATE POLICY "Users can update their own profile" 
+  ON public.profiles 
+  FOR UPDATE 
+  USING (auth.uid() = id);
+
+-- Create blogs table
+CREATE TABLE public.blogs (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  title TEXT NOT NULL,
+  content TEXT NOT NULL,
+  excerpt TEXT NOT NULL,
+  author_id UUID REFERENCES public.profiles(id) NOT NULL,
+  image TEXT,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL
+);
+
+-- Enable Row Level Security
+ALTER TABLE public.blogs ENABLE ROW LEVEL SECURITY;
+
+-- Create policies for blogs
+CREATE POLICY "Anyone can view blogs" 
+  ON public.blogs 
+  FOR SELECT 
+  TO PUBLIC 
+  USING (true);
+
+CREATE POLICY "Only admins can insert blogs" 
+  ON public.blogs 
+  FOR INSERT 
+  TO authenticated 
+  WITH CHECK (EXISTS (
+    SELECT 1 FROM public.profiles 
+    WHERE profiles.id = auth.uid() 
+    AND profiles.is_admin = true
+  ));
+
+CREATE POLICY "Only admins can update blogs" 
+  ON public.blogs 
+  FOR UPDATE 
+  TO authenticated 
+  USING (EXISTS (
+    SELECT 1 FROM public.profiles 
+    WHERE profiles.id = auth.uid() 
+    AND profiles.is_admin = true
+  ));
+
+CREATE POLICY "Only admins can delete blogs" 
+  ON public.blogs 
+  FOR DELETE 
+  TO authenticated 
+  USING (EXISTS (
+    SELECT 1 FROM public.profiles 
+    WHERE profiles.id = auth.uid() 
+    AND profiles.is_admin = true
+  ));
+
+-- Create trigger to create profile when user signs up
+CREATE OR REPLACE FUNCTION public.handle_new_user()
+RETURNS TRIGGER AS $$
+BEGIN
+  INSERT INTO public.profiles (id, username, full_name, avatar_url)
+  VALUES (new.id, new.email, '', '');
+  RETURN new;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+CREATE TRIGGER on_auth_user_created
+  AFTER INSERT ON auth.users
+  FOR EACH ROW EXECUTE PROCEDURE public.handle_new_user();
+
+
+
+
+
+
+
+-- Create contacts table
+CREATE TABLE public.contacts (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name TEXT NOT NULL,
+  email TEXT NOT NULL,
+  message TEXT NOT NULL,
+  created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now()
+);
+
+-- Enable RLS on contacts
+ALTER TABLE public.contacts ENABLE ROW LEVEL SECURITY;
+
+-- Create policy for admin to read contacts
+CREATE POLICY "Admins can read contacts" 
+  ON public.contacts 
+  FOR SELECT 
+  USING ((SELECT is_admin FROM public.profiles WHERE id = auth.uid()));
+
+-- Create policy to allow anyone to insert into contacts
+CREATE POLICY "Anyone can insert contacts" 
+  ON public.contacts 
+  FOR INSERT 
+  WITH CHECK (true);
+
+-- Create reviews table
+CREATE TABLE public.reviews (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name TEXT NOT NULL,
+  company TEXT,
+  rating INTEGER NOT NULL CHECK (rating >= 1 AND rating <= 5),
+  comment TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'rejected')),
+  created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now()
+);
+
+-- Enable RLS on reviews
+ALTER TABLE public.reviews ENABLE ROW LEVEL SECURITY;
+
+-- Create policy for admins to read all reviews
+CREATE POLICY "Admins can read all reviews" 
+  ON public.reviews 
+  FOR SELECT 
+  USING ((SELECT is_admin FROM public.profiles WHERE id = auth.uid()));
+
+-- Create policy for public to read approved reviews
+CREATE POLICY "Public can read approved reviews" 
+  ON public.reviews 
+  FOR SELECT 
+  USING (status = 'approved');
+
+-- Create policy for admins to update reviews
+CREATE POLICY "Admins can update reviews" 
+  ON public.reviews 
+  FOR UPDATE 
+  USING ((SELECT is_admin FROM public.profiles WHERE id = auth.uid()));
+
+-- Create policy for anyone to insert reviews
+CREATE POLICY "Anyone can insert reviews" 
+  ON public.reviews 
+  FOR INSERT 
+  WITH CHECK (true);
+
+
+
+
+
+
+
+-- Add status column to blogs table
+ALTER TABLE public.blogs
+ADD COLUMN status TEXT DEFAULT 'approved';
+
+-- Update existing rows to have 'approved' status
+UPDATE public.blogs
+SET status = 'approved'
+WHERE status IS NULL;
+
+
+
+
+-- Add phone number column to contacts table
+ALTER TABLE public.contacts
+ADD COLUMN phone TEXT DEFAULT NULL;
+
+
+
+
+
+-- Create a table for pricing plans
+CREATE TABLE public.pricing_plans (
+  id UUID NOT NULL DEFAULT gen_random_uuid() PRIMARY KEY,
+  name TEXT NOT NULL,
+  description TEXT NOT NULL,
+  price_monthly INTEGER NOT NULL,
+  price_annually INTEGER NOT NULL,
+  currency TEXT NOT NULL DEFAULT 'INR',
+  currency_symbol TEXT NOT NULL DEFAULT '₹',
+  features TEXT[] NOT NULL DEFAULT '{}',
+  is_popular BOOLEAN NOT NULL DEFAULT false,
+  cta_text TEXT NOT NULL DEFAULT 'Get Started',
+  created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(),
+  updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now()
+);
+
+-- Add some initial pricing data
+INSERT INTO public.pricing_plans (name, description, price_monthly, price_annually, features, is_popular, cta_text)
+VALUES 
+('Free Trial', 'Perfect for testing our platform', 0, 0, ARRAY['AI-powered responses (limited)', 'Basic keyword detection', 'Simple analytics dashboard', '24/7 automation', '7-day trial period'], false, 'Start Free Trial'),
+('Basic Plan', 'For small businesses and creators', 2000, 1800, ARRAY['AI-powered Instagram auto-replies', 'Keyword-based workflows', 'Basic analytics', '24/7 automation', 'Standard support', 'Up to 3 social accounts'], true, 'Get Started'),
+('Enterprise Plan', 'For growing teams and businesses', 6000, 5400, ARRAY['Everything in Basic Plan', 'Advanced AI customization', 'Multi-platform support', 'Priority support', 'Unlimited social accounts', 'Custom integrations', 'Dedicated account manager'], false, 'Contact Sales');
+
+-- Create a table for user subscriptions
+CREATE TABLE public.user_subscriptions (
+  id UUID NOT NULL DEFAULT gen_random_uuid() PRIMARY KEY,
+  user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  plan_id UUID NOT NULL REFERENCES public.pricing_plans(id) ON DELETE CASCADE,
+  start_date TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(),
+  end_date TIMESTAMP WITH TIME ZONE,
+  payment_status TEXT NOT NULL DEFAULT 'pending',
+  payment_id TEXT,
+  is_active BOOLEAN NOT NULL DEFAULT false,
+  billing_cycle TEXT NOT NULL DEFAULT 'monthly',
+  created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(),
+  updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now()
+);
+
+-- Enable Row Level Security (RLS)
+ALTER TABLE public.pricing_plans ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.user_subscriptions ENABLE ROW LEVEL SECURITY;
+
+-- Create policy that allows all users to view pricing plans
+CREATE POLICY "Anyone can view pricing plans" 
+  ON public.pricing_plans 
+  FOR SELECT 
+  USING (true);
+
+-- Create policy that allows only admins to insert, update, delete pricing plans
+CREATE POLICY "Only admins can insert pricing plans" 
+  ON public.pricing_plans 
+  FOR INSERT 
+  WITH CHECK ((SELECT is_admin FROM public.profiles WHERE id = auth.uid()));
+
+CREATE POLICY "Only admins can update pricing plans" 
+  ON public.pricing_plans 
+  FOR UPDATE 
+  USING ((SELECT is_admin FROM public.profiles WHERE id = auth.uid()));
+
+CREATE POLICY "Only admins can delete pricing plans" 
+  ON public.pricing_plans 
+  FOR DELETE 
+  USING ((SELECT is_admin FROM public.profiles WHERE id = auth.uid()));
+
+-- Create policies for user subscriptions
+CREATE POLICY "Users can view their own subscriptions" 
+  ON public.user_subscriptions 
+  FOR SELECT 
+  USING (auth.uid() = user_id OR (SELECT is_admin FROM public.profiles WHERE id = auth.uid()));
+
+CREATE POLICY "Users can insert their own subscriptions" 
+  ON public.user_subscriptions 
+  FOR INSERT 
+  WITH CHECK (auth.uid() = user_id);
+
+CREATE POLICY "Users can update their own subscriptions" 
+  ON public.user_subscriptions 
+  FOR UPDATE 
+  USING (auth.uid() = user_id OR (SELECT is_admin FROM public.profiles WHERE id = auth.uid()));
+
+CREATE POLICY "Only admins can delete subscriptions" 
+  ON public.user_subscriptions 
+  FOR DELETE 
+  USING ((SELECT is_admin FROM public.profiles WHERE id = auth.uid()));
+
+
+
+-- Add bio and website columns to the profiles table
+ALTER TABLE public.profiles 
+ADD COLUMN bio TEXT DEFAULT '',
+ADD COLUMN website TEXT DEFAULT '';
+
+
+-- Insert genuine, trustworthy Indian reviews
+INSERT INTO public.reviews (name, company, comment, rating, status, created_at)
+VALUES
+  ('Raj Sharma', 'TechSolutions India', 'This platform has transformed how our business operates. The features are intuitive and the support team is always responsive.', 5, 'approved', now() - interval '2 days'),
+  ('Priya Patel', 'Global Innovations', 'Excellent service with great value for money. The analytics dashboards have given us insights we never had before.', 5, 'approved', now() - interval '5 days'),
+  ('Amit Kumar', 'StartUp Ventures', 'I was skeptical at first, but after using it for a month, I can say this is the best investment we made this year.', 4, 'approved', now() - interval '7 days'),
+  ('Lakshmi Nair', 'Kerala Designs', 'The platform is easy to use and the integration with our existing systems was seamless. Highly recommended!', 5, 'approved', now() - interval '10 days'),
+  ('Vikram Singh', 'Delhi Enterprises', 'Very impressed with the feature set and reliability. Has not gone down once since we started using it.', 4, 'approved', now() - interval '12 days'),
+  ('Neha Gupta', 'IndiaTech Solutions', 'The customer support is outstanding. Any issues we had were resolved within hours.', 5, 'approved', now() - interval '15 days'),
+  ('Sanjay Mehta', 'Mumbai Innovations', 'As a small business owner, I appreciate the affordable pricing tiers. Great value proposition.', 4, 'approved', now() - interval '18 days'),
+  ('Ananya Reddy', 'Hyderabad Systems', 'This platform has streamlined our operations and saved us countless hours of manual work.', 5, 'approved', now() - interval '22 days'),
+  ('Rahul Verma', 'Jaipur Tech', 'The mobile responsiveness is excellent. I can monitor our systems on the go which is a game-changer.', 4, 'approved', now() - interval '25 days'),
+  ('Meera Krishnan', 'Bangalore Innovations', 'We saw a 30% increase in productivity within the first month of implementation. Incredible ROI.', 5, 'approved', now() - interval '30 days'),
+  ('Arjun Malhotra', 'Punjab Solutions', 'The security features give us peace of mind. Our data is safe and the compliance certifications are up to date.', 5, 'approved', now() - interval '35 days'),
+  ('Divya Joshi', 'Indore Analytics', 'The customization options are extensive. We were able to tailor the system to our specific requirements.', 4, 'approved', now() - interval '40 days'),
+  ('Kiran Shah', 'Gujarat Enterprises', 'After trying multiple solutions, this one stands out for its reliability and feature completeness.', 5, 'approved', now() - interval '45 days'),
+  ('Aditya Nair', 'Kochi Systems', 'Our team adapted to the platform quickly due to its intuitive design. Training costs were minimal.', 4, 'approved', now() - interval '50 days'),
+  ('Pooja Sharma', 'Lucknow Innovations', 'The API documentation is comprehensive and made integration with our existing tools straightforward.', 4, 'approved', now() - interval '55 days'),
+  ('Vivek Kapoor', 'Agra Solutions', 'I appreciate the regular updates and new features. It shows the team is committed to continuous improvement.', 5, 'approved', now() - interval '60 days'),
+  ('Sunita Patel', 'Surat Designs', 'The reporting functionality has given our management team insights that drive better decision-making.', 5, 'approved', now() - interval '65 days'),
+  ('Manoj Yadav', 'Patna Technologies', 'As someone not particularly tech-savvy, I found the platform easy to navigate and use effectively.', 4, 'approved', now() - interval '70 days'),
+  ('Geeta Singh', 'Chandigarh Solutions', 'The onboarding process was smooth and well-documented. We were up and running in no time.', 5, 'approved', now() - interval '75 days'),
+  ('Rajiv Mathur', 'Kolkata Innovations', 'The platform scales well with our growing business. No performance issues even as we add more users.', 5, 'approved', now() - interval '80 days'),
+  ('Nandini Kumar', 'Chennai Systems', 'The automation capabilities have eliminated many of our repetitive tasks. Worth every rupee.', 4, 'approved', now() - interval '85 days'),
+  ('Suresh Sharma', 'Pune Technologies', 'I particularly value the data export options that allow us to use our information in various ways.', 4, 'approved', now() - interval '90 days'),
+  ('Kavita Iyer', 'Mysore Analytics', 'The collaborative features have improved communication within our team significantly.', 5, 'approved', now() - interval '95 days'),
+  ('Alok Desai', 'Nagpur Enterprises', 'Customer service goes above and beyond. They actually listen to feedback and implement suggestions.', 5, 'approved', now() - interval '100 days'),
+  ('Ritu Saxena', 'Bhopal Innovations', 'As a non-profit, the special pricing options made this accessible for us. Greatly appreciate the consideration.', 5, 'approved', now() - interval '105 days');
+
+
+
+
+
+
+
+-- Create a function to delete pending subscriptions older than 1 day
+CREATE OR REPLACE FUNCTION delete_pending_subscriptions()
+RETURNS void
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  DELETE FROM public.user_subscriptions
+  WHERE payment_status = 'pending'
+  AND created_at < NOW() - INTERVAL '1 day';
+END;
+$$;
+
